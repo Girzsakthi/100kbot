@@ -106,23 +106,37 @@ Open Telegram, find your bot by the username you gave BotFather, and send
 
 ## Deploying to Replit (free 24/7 hosting)
 
-1. Create a new Repl, choose **Import from GitHub** (or upload the project
-   files), select the Python template.
-2. In the Repl, open the **Secrets** tool (padlock icon in the sidebar) and
-   add:
+This repo ships a `.replit` config, so importing it runs `setup.sh` and then
+`bot.py` automatically -- no manual run-command setup needed.
+
+1. On [replit.com](https://replit.com), click **Create App** -> **Import
+   from GitHub** and point it at this repo (or upload the project files
+   into a new Python Repl).
+2. Open the **Secrets** tool (padlock icon in the sidebar) and add:
    - `TELEGRAM_BOT_TOKEN`
    - `ANTHROPIC_API_KEY`
    - `TELEGRAM_ALLOWED_USER_ID` (optional)
    - `CLAUDE_MODEL` (optional, defaults to `claude-opus-4-8`)
+   - `ENABLE_KEEP_ALIVE` = `true` (turns on the keep-alive web server below)
 3. Replit secrets are injected as environment variables automatically --
-   `python-dotenv` will simply find nothing in `.env` and fall through to
-   them, so you don't need to upload your `.env` file to Replit at all.
-4. Set the Run command to `python bot.py` (or run `./setup.sh && python bot.py`
-   once to install dependencies, then just `python bot.py` after).
-5. Click **Run**. The console should log `100K Launch Bot starting up...`.
-6. To keep it running 24/7 on Replit's free tier, use an uptime pinger
-   (e.g. UptimeRobot) hitting a keep-alive endpoint, or use Replit's
-   "Always On" / Reserved VM feature if available on your plan.
+   `python-dotenv` finds nothing in `.env` and falls through to them, so you
+   don't need to upload a `.env` file to Replit at all.
+4. Click **Run**. The console should log `100K Launch Bot starting up...`
+   and, with `ENABLE_KEEP_ALIVE=true`, `Keep-alive server started on port ...`.
+5. **Keep it running 24/7 (free tier):** Replit's free tier spins a Repl
+   down after it stops receiving HTTP traffic. This repo's `keep_alive.py`
+   runs a tiny web server (enabled via the `ENABLE_KEEP_ALIVE` secret above)
+   specifically so an external pinger can keep the process awake:
+   1. Copy your Repl's public URL (shown once it's running -- looks like
+      `https://<repl-name>.<username>.repl.co`).
+   2. Create a free monitor at [UptimeRobot](https://uptimerobot.com) (or
+      [cron-job.org](https://cron-job.org)) that does an HTTP GET on that
+      URL every 5 minutes.
+   3. As long as the monitor keeps pinging, the Repl -- and the Telegram
+      bot's polling loop running alongside it -- stays alive.
+   - If your Replit plan includes "Always On" or a Reserved VM, use that
+     instead and skip the external pinger (you can leave
+     `ENABLE_KEEP_ALIVE=false` in that case).
 
 **Persisting data on Replit:** `data.json` is written to the Repl's
 filesystem, which persists across restarts of the same Repl (but is not
@@ -221,6 +235,8 @@ billing issues if it persists.
 ```
 100kbot/
 ├── bot.py            # Main bot (all commands, Claude integration, storage)
+├── keep_alive.py      # Optional Flask server so free-tier hosts don't sleep the bot
+├── .replit            # Replit run/deploy config (auto-detected on import)
 ├── requirements.txt   # Python dependencies
 ├── .env.example       # Environment variable template
 ├── setup.sh           # Automated setup script

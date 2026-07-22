@@ -65,6 +65,8 @@ LAUNCH_START_DATE = os.getenv("LAUNCH_START_DATE", "").strip()
 _raw_allowed_user = os.getenv("TELEGRAM_ALLOWED_USER_ID", "").strip()
 TELEGRAM_ALLOWED_USER_ID: Optional[int] = int(_raw_allowed_user) if _raw_allowed_user else None
 
+ENABLE_KEEP_ALIVE = os.getenv("ENABLE_KEEP_ALIVE", "").strip().lower() in ("1", "true", "yes")
+
 LAUNCH_LENGTH_DAYS = 20
 
 logging.basicConfig(
@@ -901,6 +903,11 @@ def main() -> None:
     """Configure and run the bot with long polling."""
     _validate_config()
     load_data()  # ensure data.json exists before we start serving traffic
+
+    if ENABLE_KEEP_ALIVE:
+        import keep_alive
+
+        keep_alive.start()
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
