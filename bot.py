@@ -9,7 +9,7 @@ A Telegram bot that powers a 20-day, $100K digital-product launch:
   * Shows a daily checklist and lets you mark tasks done from Telegram.
   * Generates launch content (YouTube scripts, blog outlines, email
     sequences, Reddit comments, Twitter threads, product descriptions)
-    using the Claude API.
+    using the Google Gemini API (free tier).
   * Tracks revenue and business metrics and compares them against the
     targets needed to hit $100K by day 20.
   * Persists everything to a single JSON file so state survives restarts.
@@ -45,9 +45,11 @@ from telegram.ext import (
 )
 
 try:
-    import anthropic
-except ImportError:  # pragma: no cover - anthropic is a hard requirement
-    anthropic = None
+    from google import genai
+    from google.genai import types as genai_types
+except ImportError:  # pragma: no cover - google-genai is a hard requirement
+    genai = None
+    genai_types = None
 
 
 # ======================================================================
@@ -57,8 +59,8 @@ except ImportError:  # pragma: no cover - anthropic is a hard requirement
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "").strip() or "claude-opus-4-8"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.0-flash"
 DATA_FILE = Path(os.getenv("DATA_FILE", "").strip() or "data.json")
 LAUNCH_START_DATE = os.getenv("LAUNCH_START_DATE", "").strip()
 
@@ -88,9 +90,9 @@ logger = logging.getLogger("100k_bot")
 # double-tap of a command).
 _data_lock = asyncio.Lock()
 
-_anthropic_client: Optional["anthropic.Anthropic"] = None
-if ANTHROPIC_API_KEY and anthropic is not None:
-    _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+_gemini_client: Optional["genai.Client"] = None
+if GEMINI_API_KEY and genai is not None:
+    _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 # ======================================================================
@@ -315,7 +317,7 @@ ENCOURAGEMENTS: List[str] = [
 
 
 # ======================================================================
-# Claude content generation
+# Gemini content generation
 # ======================================================================
 
 DEFAULT_NICHE = "AI-powered digital products and side hustles"
@@ -452,18 +454,18 @@ CONTENT_SPECS: Dict[str, Dict[str, Any]] = {
 
 
 class ContentGenerationError(Exception):
-    """Raised when the Claude API call fails or is misconfigured."""
+    """Raised when the Gemini API call fails or is misconfigured."""
 
 
-async def generate_with_claude(content_type: str, niche: str) -> str:
-    """Call the Claude API and return generated launch content as text.
+async def generate_ai_content(content_type: str, niche: str) -> str:
+    """Call the Gemini API and return generated launch content as text.
 
-    Runs the blocking Anthropic SDK call in a worker thread so it never
+    Runs the blocking google-genai SDK call in a worker thread so it never
     blocks the bot's asyncio event loop.
     """
-    if _anthropic_client is None:
+    if _gemini_client is None:
         raise ContentGenerationError(
-            "ANTHROPIC_API_KEY is not configured. Add it to your .env file "
+            "GEMINI_API_KEY is not configured. Add it to your .env file "
             "and restart the bot."
         )
 
@@ -472,30 +474,27 @@ async def generate_with_claude(content_type: str, niche: str) -> str:
     user_prompt = spec["user"].format(niche=niche, count=spec["count"])
 
     def _call() -> str:
-        response = _anthropic_client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=spec["max_tokens"],
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+        response = _gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_prompt,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=spec["max_tokens"],
+            ),
         )
-        return "".join(
-            block.text for block in response.content if getattr(block, "type", "") == "text"
-        )
+        return response.text or ""
 
     try:
         text = await asyncio.to_thread(_call)
-    except anthropic.APIError as exc:  # type: ignore[union-attr]
-        logger.error("Claude API error while generating %s: %s", content_type, exc)
+    except Exception as exc:  # Gemini API errors, network failures, etc.
+        logger.error("Gemini API error while generating %s: %s", content_type, exc)
         raise ContentGenerationError(
-            "Claude API request failed. Check your ANTHROPIC_API_KEY, account "
-            "credits, and try again in a moment."
+            "Gemini API request failed. Check your GEMINI_API_KEY, quota, "
+            "and try again in a moment."
         ) from exc
-    except Exception as exc:  # pragma: no cover - defensive catch-all
-        logger.exception("Unexpected error generating %s content", content_type)
-        raise ContentGenerationError(f"Unexpected error: {exc}") from exc
 
     if not text.strip():
-        raise ContentGenerationError("Claude returned an empty response. Try again.")
+        raise ContentGenerationError("Gemini returned an empty response. Try again.")
     return text.strip()
 
 
@@ -801,7 +800,7 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
     try:
-        content = await generate_with_claude(content_type, niche)
+        content = await generate_ai_content(content_type, niche)
     except ContentGenerationError as exc:
         await status_msg.edit_text(f"❌ {exc}")
         return
@@ -844,7 +843,7 @@ async def auto_generate_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     spec = CONTENT_SPECS[content_type]
     try:
-        content = await generate_with_claude(content_type, DEFAULT_NICHE)
+        content = await generate_ai_content(content_type, DEFAULT_NICHE)
     except ContentGenerationError as exc:
         logger.error("Auto-generate failed for %s: %s", content_type, exc)
         await context.bot.send_message(
@@ -870,7 +869,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "progress percentage.\n\n"
         "*/done <task name>*\n  Marks a task complete by matching part of its "
         "text.\n  Example: `/done youtube video`\n\n"
-        "*/generate <type> [topic]*\n  Generates AI content with Claude.\n"
+        "*/generate <type> [topic]*\n  Generates AI content with Gemini.\n"
         "  Types: youtube, blog, email, reddit, twitter, product\n"
         "  Example: `/generate blog AI side hustles`\n\n"
         "*/stats*\n  Revenue + metrics dashboard, compared against the pace "
@@ -942,14 +941,14 @@ def _validate_config() -> None:
             "2. Get a token from @BotFather on Telegram\n"
             "3. Put it in .env as TELEGRAM_BOT_TOKEN=...\n"
         )
-    if anthropic is None:
+    if genai is None:
         logger.warning(
-            "The 'anthropic' package is not installed. /generate will not work "
-            "until you `pip install -r requirements.txt`."
+            "The 'google-genai' package is not installed. /generate will not "
+            "work until you `pip install -r requirements.txt`."
         )
-    elif not ANTHROPIC_API_KEY:
+    elif not GEMINI_API_KEY:
         logger.warning(
-            "ANTHROPIC_API_KEY is not set. /generate will reply with a config "
+            "GEMINI_API_KEY is not set. /generate will reply with a config "
             "error until it's added to .env."
         )
 
@@ -1001,7 +1000,7 @@ def main() -> None:
 
     logger.info(
         "100K Launch Bot starting up (model=%s, data_file=%s, restricted=%s)",
-        CLAUDE_MODEL,
+        GEMINI_MODEL,
         DATA_FILE,
         bool(TELEGRAM_ALLOWED_USER_ID),
     )

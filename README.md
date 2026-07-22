@@ -14,8 +14,8 @@ no database required.
 - **`/day`** -- Which day of the 20-day launch you're on, and days remaining.
 - **`/checklist`** -- Today's tasks with ✅ for completed ones and a progress bar.
 - **`/done <task>`** -- Mark a task complete by matching part of its text.
-- **`/generate <type> [topic]`** -- Generate AI content with Claude.
-  Types: `youtube`, `blog`, `email`, `reddit`, `twitter`, `product`.
+- **`/generate <type> [topic]`** -- Generate AI content with Google Gemini
+  (free tier). Types: `youtube`, `blog`, `email`, `reddit`, `twitter`, `product`.
 - **`/stats`** -- Revenue and metrics dashboard, compared against the pace
   needed to hit $100K by day 20.
 - **`/track <metric> <value>`** -- Update a metric (views, sales, revenue, etc).
@@ -33,7 +33,7 @@ Data (launch start date, completed tasks, metrics, revenue) persists to
 
 - Python 3.9+
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
-- An Anthropic API key (from the [Anthropic Console](https://console.anthropic.com/))
+- A Google Gemini API key (free, from [Google AI Studio](https://aistudio.google.com/apikey))
 
 ---
 
@@ -66,12 +66,13 @@ installs dependencies from `requirements.txt`, and copies `.env.example` to
 3. BotFather replies with a token like `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`.
 4. Copy it into `.env` as `TELEGRAM_BOT_TOKEN`.
 
-**Anthropic (Claude) API key:**
+**Google Gemini API key (free):**
 
-1. Go to [console.anthropic.com](https://console.anthropic.com/) and sign in.
-2. Open **API Keys** in the left sidebar.
-3. Click **Create Key** and copy the value (starts with `sk-ant-`).
-4. Paste it into `.env` as `ANTHROPIC_API_KEY`.
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and
+   sign in with a Google account.
+2. Click **Create API key**. No credit card is required for the free tier.
+3. Copy the key it gives you.
+4. Paste it into `.env` as `GEMINI_API_KEY`.
 
 **(Optional) Restrict the bot to yourself:**
 
@@ -85,8 +86,8 @@ installs dependencies from `requirements.txt`, and copies `.env.example` to
 ```bash
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
 TELEGRAM_ALLOWED_USER_ID=
-ANTHROPIC_API_KEY=sk-ant-...
-CLAUDE_MODEL=claude-opus-4-8
+GEMINI_API_KEY=AIzaSy...
+GEMINI_MODEL=gemini-2.0-flash
 DATA_FILE=data.json
 LAUNCH_START_DATE=
 ```
@@ -117,9 +118,9 @@ This repo ships a `.replit` config, so importing it runs `setup.sh` and then
    into a new Python Repl).
 2. Open the **Secrets** tool (padlock icon in the sidebar) and add:
    - `TELEGRAM_BOT_TOKEN`
-   - `ANTHROPIC_API_KEY`
+   - `GEMINI_API_KEY`
    - `TELEGRAM_ALLOWED_USER_ID` (optional)
-   - `CLAUDE_MODEL` (optional, defaults to `claude-opus-4-8`)
+   - `GEMINI_MODEL` (optional, defaults to `gemini-2.0-flash`)
    - `ENABLE_KEEP_ALIVE` = `true` (turns on the keep-alive web server below)
 3. Replit secrets are injected as environment variables automatically --
    `python-dotenv` finds nothing in `.env` and falls through to them, so you
@@ -240,7 +241,7 @@ Generated content is delivered as regular messages, headed with
 use `/track` once you've actually published something, same as with a
 manual `/generate`.
 
-If `ANTHROPIC_API_KEY` is missing or a request fails, you'll get a short
+If `GEMINI_API_KEY` is missing or a request fails, you'll get a short
 warning message instead of the content, and the rotation still advances to
 the next type on the following run.
 
@@ -252,8 +253,8 @@ the next type on the following run.
 Copy `.env.example` to `.env` and fill in a real token from @BotFather.
 
 **`/generate` replies with a config error**
-`ANTHROPIC_API_KEY` is missing or invalid. Double-check the key in `.env` (or
-Replit Secrets) and that your Anthropic account has available credits.
+`GEMINI_API_KEY` is missing or invalid. Double-check the key in `.env` (or
+Replit Secrets) at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 
 **Bot doesn't respond at all**
 - Confirm the process is actually running and didn't crash (check the console/logs).
@@ -269,10 +270,11 @@ directory.
 Run `/checklist` to see the exact task wording for the current day, then
 use a more specific (or shorter, more unique) substring.
 
-**Claude API errors / rate limits**
-The bot surfaces a friendly error message and logs the details. Wait a
-moment and retry `/generate`; check your Anthropic Console for rate limit or
-billing issues if it persists.
+**Gemini API errors / rate limits**
+The bot surfaces a friendly error message and logs the actual error to the
+console. Wait a moment and retry `/generate`; the free tier has a requests-
+per-minute limit -- if you're hitting it, space out `/generate` calls or
+reduce `AUTO_GENERATE_INTERVAL_HOURS`.
 
 ---
 
@@ -280,7 +282,7 @@ billing issues if it persists.
 
 ```
 100kbot/
-├── bot.py            # Main bot (all commands, Claude integration, storage)
+├── bot.py            # Main bot (all commands, Gemini integration, storage)
 ├── keep_alive.py      # Optional Flask server so free-tier hosts don't sleep the bot
 ├── .replit            # Replit run/deploy config (auto-detected on import)
 ├── requirements.txt   # Python dependencies

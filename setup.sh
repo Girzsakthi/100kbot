@@ -67,7 +67,7 @@ fi
 echo ""
 echo "=== Setup complete ==="
 echo "Next steps:"
-echo "  1. Edit .env and add your TELEGRAM_BOT_TOKEN and ANTHROPIC_API_KEY"
+echo "  1. Edit .env and add your TELEGRAM_BOT_TOKEN and GEMINI_API_KEY"
 echo "  2. Run the bot:"
 if [ -z "${REPL_ID:-}" ]; then
     echo "       source venv/bin/activate && python bot.py"
