@@ -20,6 +20,9 @@ no database required.
   needed to hit $100K by day 20.
 - **`/track <metric> <value>`** -- Update a metric (views, sales, revenue, etc).
 - **`/help`** -- Full command reference.
+- **Scheduled auto-generation** (optional) -- automatically runs `/generate`
+  on a timer and pushes the result to your chat, rotating through content
+  types, so you don't have to trigger it by hand. See below.
 
 Data (launch start date, completed tasks, metrics, revenue) persists to
 `data.json` and survives restarts.
@@ -162,9 +165,15 @@ periodically download `data.json` as a backup.
     "reddit_posts": 0,
     "twitter_posts": 0
   },
-  "revenue": 0
+  "revenue": 0,
+  "chat_id": null,
+  "auto_generate_index": 0
 }
 ```
+
+`chat_id` is set automatically the first time you run `/start` -- it's how
+scheduled auto-generation (see above) knows where to deliver content.
+`auto_generate_index` tracks which content type is next in the rotation.
 
 `tasks_completed` entries are `"<day>:<task_index>"` strings, e.g. `"1:0"`
 means the first task of Day 1 is done.
@@ -197,6 +206,43 @@ Run `/checklist` any day to see the exact task list and your progress.
 
 The topic/niche is optional -- omit it to use the default niche
 ("AI-powered digital products and side hustles").
+
+---
+
+## Scheduled auto-generation
+
+Instead of typing `/generate` yourself, the bot can generate content on a
+timer and push it straight to your chat -- no external scheduler needed, it
+runs inside the same process using `python-telegram-bot`'s built-in JobQueue.
+
+**Setup:**
+
+1. Send `/start` to the bot at least once (this is how it learns which chat
+   to deliver auto-generated content to -- it's saved in `data.json`).
+2. Set these in `.env` (or Replit Secrets):
+
+   ```bash
+   AUTO_GENERATE_ENABLED=true
+   AUTO_GENERATE_INTERVAL_HOURS=24
+   AUTO_GENERATE_TYPES=youtube,blog,reddit,twitter
+   ```
+3. Restart the bot. Thirty seconds after startup it runs once immediately
+   (so you can confirm it's wired up), then repeats every
+   `AUTO_GENERATE_INTERVAL_HOURS`.
+
+**How it rotates:** each run generates the next type in `AUTO_GENERATE_TYPES`
+(in order, wrapping back to the start), using the default niche. Change the
+niche by editing `DEFAULT_NICHE` in `bot.py` if the default ("AI-powered
+digital products and side hustles") doesn't match your launch.
+
+Generated content is delivered as regular messages, headed with
+"🤖 Auto-generated ...". It does **not** auto-update your `/stats` metrics --
+use `/track` once you've actually published something, same as with a
+manual `/generate`.
+
+If `ANTHROPIC_API_KEY` is missing or a request fails, you'll get a short
+warning message instead of the content, and the rotation still advances to
+the next type on the following run.
 
 ---
 

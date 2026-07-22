@@ -67,6 +67,14 @@ TELEGRAM_ALLOWED_USER_ID: Optional[int] = int(_raw_allowed_user) if _raw_allowed
 
 ENABLE_KEEP_ALIVE = os.getenv("ENABLE_KEEP_ALIVE", "").strip().lower() in ("1", "true", "yes")
 
+AUTO_GENERATE_ENABLED = os.getenv("AUTO_GENERATE_ENABLED", "").strip().lower() in ("1", "true", "yes")
+AUTO_GENERATE_INTERVAL_HOURS = float(os.getenv("AUTO_GENERATE_INTERVAL_HOURS", "").strip() or "24")
+AUTO_GENERATE_TYPES: List[str] = [
+    t.strip().lower()
+    for t in os.getenv("AUTO_GENERATE_TYPES", "youtube,blog,reddit,twitter").split(",")
+    if t.strip()
+]
+
 LAUNCH_LENGTH_DAYS = 20
 
 logging.basicConfig(
@@ -122,6 +130,8 @@ def _default_data() -> Dict[str, Any]:
         "tasks_completed": [],
         "metrics": dict(DEFAULT_METRICS),
         "revenue": 0,
+        "chat_id": None,
+        "auto_generate_index": 0,
     }
 
 
@@ -546,6 +556,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     day = get_current_day(data)
     remaining = get_days_remaining(day)
 
+    # Remember this chat so scheduled auto-generation (if enabled) has
+    # somewhere to deliver content.
+    if data.get("chat_id") != update.effective_chat.id:
+        data["chat_id"] = update.effective_chat.id
+        await save_data(data)
+
     message = (
         "🚀 *Welcome to the 100K Launch Bot!*\n\n"
         f"You're on *Day {day} of {LAUNCH_LENGTH_DAYS}* "
@@ -804,6 +820,45 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
+async def auto_generate_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Scheduled job: generate the next content type in rotation and push it
+    to the chat that last ran /start. No-ops until /start has been run once
+    (there's nowhere to deliver content to yet).
+    """
+    data = load_data()
+    chat_id = data.get("chat_id")
+    if chat_id is None:
+        logger.info("Auto-generate skipped: no chat has run /start yet.")
+        return
+    if not AUTO_GENERATE_TYPES:
+        return
+
+    idx = data.get("auto_generate_index", 0) % len(AUTO_GENERATE_TYPES)
+    content_type = AUTO_GENERATE_TYPES[idx]
+    data["auto_generate_index"] = (idx + 1) % len(AUTO_GENERATE_TYPES)
+    await save_data(data)
+
+    if content_type not in CONTENT_SPECS:
+        logger.warning("Auto-generate: '%s' in AUTO_GENERATE_TYPES is not a valid type.", content_type)
+        return
+
+    spec = CONTENT_SPECS[content_type]
+    try:
+        content = await generate_with_claude(content_type, DEFAULT_NICHE)
+    except ContentGenerationError as exc:
+        logger.error("Auto-generate failed for %s: %s", content_type, exc)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⚠️ Scheduled auto-generation of {spec['label']} failed: {exc}",
+        )
+        return
+
+    header = f"🤖 *Auto-generated {spec['label']}*\n\n"
+    for chunk in split_message(header + content):
+        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode=None)
+    logger.info("Auto-generated %s content delivered to chat_id=%s", content_type, chat_id)
+
+
 @restricted
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/help - Full command reference with usage examples."""
@@ -922,6 +977,27 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     application.add_error_handler(error_handler)
+
+    if AUTO_GENERATE_ENABLED:
+        if application.job_queue is None:
+            logger.warning(
+                "AUTO_GENERATE_ENABLED is set but the JobQueue isn't available. "
+                "Install the job-queue extra: pip install 'python-telegram-bot[job-queue]'."
+            )
+        elif not AUTO_GENERATE_TYPES:
+            logger.warning("AUTO_GENERATE_ENABLED is set but AUTO_GENERATE_TYPES is empty.")
+        else:
+            application.job_queue.run_repeating(
+                auto_generate_job,
+                interval=AUTO_GENERATE_INTERVAL_HOURS * 3600,
+                first=30,
+                name="auto_generate",
+            )
+            logger.info(
+                "Auto-generate scheduled every %.1fh, rotating through: %s",
+                AUTO_GENERATE_INTERVAL_HOURS,
+                ", ".join(AUTO_GENERATE_TYPES),
+            )
 
     logger.info(
         "100K Launch Bot starting up (model=%s, data_file=%s, restricted=%s)",
